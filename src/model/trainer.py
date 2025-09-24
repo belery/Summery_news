@@ -61,8 +61,8 @@ class ModelTrainer:
 
                 total_loss += loss.item()
                 _, predicted = output.max(dim=-1)
-                total += (predicted == tgt[1:]).sum().item()
-                correct += (predicted == tgt[1:]).sum().item()
+                total += (decoder_target != 0).sum().item()  # 不计算padding的总数
+                correct += ((predicted == decoder_target) & (decoder_target != 0)).sum().item()  # 不计算padding的正确数
 
                 if batch_idx % 100 == 0:
                     acc = 100 * correct / total
@@ -71,6 +71,10 @@ class ModelTrainer:
             avg_loss = total_loss / len(train_dataloader)
             acc =  100 * correct / total
             print(f"Epoch [{epoch+1}/{epochs}], Avg. Loss: {avg_loss:.4f}, Acc: {acc:.2f}%")
+            val_metrics = self.evaluate(val_dataloader, device)
+            print(f"Validation - Loss: {val_metrics['loss']:.4f}, Acc: {val_metrics['accuracy']:.2f}%")
+        if epoch+1 % 5 == 0:
+            self.save_model(f"model_epoch_{epoch}.pt")
 
                 
                 
@@ -86,7 +90,45 @@ class ModelTrainer:
         Returns:
             dict: 评估结果
         """
-        pass
+        self.model.eval()
+        total_loss = 0
+        correct, total = 0, 0
+        criterion = torch.nn.CrossEntropyLoss(ignore_index=0)
+        
+        with torch.no_grad():
+            for batch in dataloader:
+                src, tgt = batch
+                src = src.to(device)
+                tgt = tgt.to(device)
+                
+                decoder_input = tgt[:, :-1]
+                decoder_target = tgt[:, 1:]
+                src_mask, tgt_mask, src_key_padding_mask, tgt_key_padding_mask = get_pad_mask(src, tgt, pad_token_id=0)
+                tgt_seq_len = decoder_input.size(1)
+                tgt_caueal_mask = torch.triu(torch.ones(tgt_seq_len, tgt_seq_len), diagonal=1)
+                tgt_caueal_mask = tgt_caueal_mask.masked_fill(tgt_caueal_mask == 1, float('-inf')).to(device)
+                
+                output = self.model(
+                    src, decoder_input,
+                    src_mask, tgt_mask=tgt_caueal_mask,
+                    src_key_padding_mask=src_key_padding_mask,
+                    tgt_key_padding_mask=tgt_key_padding_mask
+                )
+                
+                loss = criterion(output.view(-1, output.shape[-1]), decoder_target.contiguous().view(-1))
+                total_loss += loss.item()
+                
+                _, predicted = output.max(dim=-1)
+                total += (decoder_target != 0).sum().item()
+                correct += ((predicted == decoder_target) & (decoder_target != 0)).sum().item()
+        
+        avg_loss = total_loss / len(dataloader)
+        accuracy = 100 * correct / total if total > 0 else 0
+        
+        return {
+            'loss': avg_loss,
+            'accuracy': accuracy
+        }
     
     def save_model(self, path):
         """
@@ -95,7 +137,8 @@ class ModelTrainer:
         Args:
             path (str): 保存路径
         """
-        pass
+        torch.save(self.model.state_dict(), path)
+        print(f"模型已保存到 {path}")
     
     def load_model(self, path):
         """

@@ -1,6 +1,8 @@
 import jieba
 from collections import Counter
-def create_masks(src, tgt, pad_token_id):
+import torch
+
+def get_pad_mask(src, tgt, pad_token_id):
     """
     创建源序列和目标序列的掩码
     
@@ -12,7 +14,12 @@ def create_masks(src, tgt, pad_token_id):
     Returns:
         tuple: (src_mask, tgt_mask, src_key_padding_mask, tgt_key_padding_mask)
     """
-    pass
+    src_key_padding_mask = (src == pad_token_id)
+    tgt_key_padding_mask = (tgt == pad_token_id)
+
+    tgt_mask = None
+    scr_mask = None
+    return scr_mask, tgt_mask, src_key_padding_mask, tgt_key_padding_mask
 
 def calculate_rouge_scores(generated_summaries, reference_summaries):
     """

@@ -2,27 +2,29 @@ import argparse
 from data.cnews_data_processor import CNewsDataProcessor
 from model.transformer_summarizer import TransformerSummarizer
 from model.trainer import ModelTrainer
-
+from torch.utils.data import DataLoader, Dataset
+import jieba
+from utils.TxetSummary import TextSummaryDataset
+import torch
 def main():
     """
     主程序入口
     """
-    parser = argparse.ArgumentParser(description='新闻摘要生成')
-    parser.add_argument('--data_path', type=str, required=True, help='数据集路径')
-    parser.add_argument('--mode', type=str, choices=['train', 'predict'], required=True, help='运行模式')
-    parser.add_argument('--model_path', type=str, help='模型路径')
-    parser.add_argument('--epochs', type=int, default=10, help='训练轮数')
-    parser.add_argument('--batch_size', type=int, default=32, help='批次大小')
-    parser.add_argument('--learning_rate', type=float, default=0.001, help='学习率')
-    
-    args = parser.parse_args()
-    
-    if args.mode == 'train':
-        train_model(args)
-    elif args.mode == 'predict':
-        predict_summary(args)
+    train_data_path = "../../cnews_副本/train.src"
+    test_data_path = "../../cnews_副本/test.src"
+    val_data_path = "../../cnews_副本/valid.src"
+    train_tgt_path = "../../cnews_副本/train.tgt"
+    val_tgt_path = "../../cnews_副本/valid.tgt"
+    epochs = 20
+    batch_size = 32
+    max_len = 1024
+    learning_rate = 0.001
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print("使用设备: ", device)
 
-def train_model(args):
+    train_model(train_data_path, test_data_path, val_data_path, max_len, epochs, batch_size, learning_rate, train_tgt_path, val_tgt_path)
+
+def train_model(train_data_path, test_data_path, val_data_path, max_len, epochs, batch_size, learning_rate, train_tgt_path, val_tgt_path):
     """
     训练模型
     
@@ -30,11 +32,22 @@ def train_model(args):
         args: 命令行参数
     """
     # 初始化数据处理器
-    data_processor = CNewsDataProcessor(args.data_path)
+    data_processor = CNewsDataProcessor(train_data_path, val_data_path, train_tgt_path,val_tgt_path, max_len)
     
     # 加载和预处理数据
-    train_data, val_data, test_data = data_processor.load_data()
-    
+    train_data, val_data = data_processor.load_data()
+
+    train_dataset = TextSummaryDataset(train_data, jieba, max_len)
+    val_dataset = TextSummaryDataset(val_data, jieba, max_len)
+
+
+
+    #创建数据加载器
+    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')  
+    print("使用设备: ", device)
     # 初始化模型
     model = TransformerSummarizer(
         vocab_size=10000,
@@ -43,15 +56,19 @@ def train_model(args):
         num_encoder_layers=6,
         num_decoder_layers=6,
         dim_feedforward=2048,
-        max_seq_length=512
+        max_seq_length=1024,
+        dropout=0.2
     )
+    model.to(device)
     
     # 初始化训练器
     trainer = ModelTrainer(model, None)
     
     # 执行训练
     print("开始训练模型...")
-    pass
+    trainer.train(train_dataloader, val_dataloader, epochs, learning_rate, 'cpu')
+
+    
 
 def predict_summary(args):
     """

@@ -39,7 +39,8 @@ class TransformerSummarizer(nn.Module):
             num_decoder_layers=num_decoder_layers,
             dim_feedforward=dim_feedforward,
             dropout=0.1,
-            activation='relu'
+            activation='relu',
+            batch_first=False  # PyTorch Transformer默认使用seq_first格式
         )
         
         # 输出层
@@ -56,7 +57,8 @@ class TransformerSummarizer(nn.Module):
         Returns:
             torch.Tensor: 位置编码张量
         """
-        pe = torch.zeros(max_len, d_model)
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        pe = torch.zeros(max_len, d_model, device=device)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
         div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
         pe[:, 0::2] = torch.sin(position * div_term)
@@ -80,17 +82,43 @@ class TransformerSummarizer(nn.Module):
         Returns:
             torch.Tensor: 模型输出
         """
+        # Embedding and position encoding
         src_embed = self.embedding(src)
         tgt_embed = self.embedding(tgt)
-        src_embed = src_embed + self.pos_encoding[:,:src_embed.size(1),:]
-        tgt_embed = tgt_embed + self.pos_encoding[:,:tgt_embed.size(1),:]
+        
+        # Add position encoding
+        src_embed = src_embed + self.pos_encoding[:, :src_embed.size(1), :]
+        tgt_embed = tgt_embed + self.pos_encoding[:, :tgt_embed.size(1), :]
+        
+        # Transpose to match PyTorch Transformer requirement: (seq_len, batch_size, d_model)
         src_embed = src_embed.transpose(0, 1)
         tgt_embed = tgt_embed.transpose(0, 1)
-    
+        
+        device = src_embed.device
+        
+        # Move masks to device (no transpose needed)
+        # According to PyTorch documentation, when batch_first=False (default),
+        # src_key_padding_mask should be (batch_size, seq_len)
+        # However, internally PyTorch will handle the dimension properly
+        if src_key_padding_mask is not None:
+            src_key_padding_mask = src_key_padding_mask.to(device)
+        if tgt_key_padding_mask is not None:
+            tgt_key_padding_mask = tgt_key_padding_mask.to(device)
+        if memory_key_padding_mask is not None:
+            memory_key_padding_mask = memory_key_padding_mask.to(device)
+        elif src_key_padding_mask is not None:
+            # If memory_key_padding_mask is not provided, use src_key_padding_mask
+            memory_key_padding_mask = src_key_padding_mask
+
+        # Forward through transformer
         output = self.transformer(src_embed, tgt_embed, 
-                                  src_mask, tgt_mask, 
-                                  src_key_padding_mask, tgt_key_padding_mask, 
-                                  )
+                                  src_mask=src_mask, 
+                                  tgt_mask=tgt_mask,
+                                  src_key_padding_mask=src_key_padding_mask, 
+                                  tgt_key_padding_mask=tgt_key_padding_mask, 
+                                  memory_key_padding_mask=memory_key_padding_mask)
+        
+        # Transpose back to (batch_size, seq_len, d_model)
         output = output.transpose(0, 1)
         output = self.output_layer(output)
         return output
